@@ -106,7 +106,7 @@ class BangdanAnalyzer(object):
         year: int,
         by_month: bool = False, # 是否按月份分别分析，默认为否
         bangdan_type: List[str] = None, # 1 - realtime, 2 - hottest
-        top10: bool = True, # 榜单仅取前10
+        top10: bool = True, # 榜单仅取前10 TODO 试试取前20
         skip_repetition: bool = True, # TODO 是否去重，默认为是
         
     ):
@@ -136,13 +136,22 @@ class BangdanAnalyzer(object):
         # bangdan_text_list = []
         bangdan_text_set = set()
         for file_name in file_list:
+            print(file_name)
             with open(file_name, "r") as rfile:
                 for line in rfile.readlines():
                     line = line.strip()
                     line_data = line.split("\t")
                     if len(line_data) < 2:
                         continue
-                    data = json.loads(line_data[1])
+                    try:
+                        data = json.loads(line_data[1])
+                    except json.JSONDecodeError as e:
+                        print(f"JSONDecodeError: {e}")
+                        # 打印出错误位置
+                        print(f"Error at line {e.lineno}, column {e.colno}")
+                        # 打印出错误字符位置
+                        print(f"Error at character {e.pos}, {line_data[1][int(e.pos)-20: int(e.pos)+20]}")
+                        continue
                     if data["type"] not in self.bangdan_type:
                         # 排除不允许的榜单类型
                         continue
@@ -152,13 +161,18 @@ class BangdanAnalyzer(object):
                             continue
                         card_group = card["card_group"]
                         if self.top10:
-                            card_group = card_group[0:10]
+                            card_group = card_group[0:20]
                         for s_card in card_group:
-                            bangdan_text_set.add(s_card["desc"])
+                            if "desc" in s_card.keys():
+                                bangdan_text_set.add(s_card["desc"])
+                            elif "title" in s_card.keys():
+                                bangdan_text_set.add(s_card["title"])
+                            else:
+                                print(f"desc not in keys! file_name {file_name}, data: {s_card.keys()}")
         return list(bangdan_text_set)
     
 
-    def compute_coherence_values(self, X, dictionary, corpus, texts, limit, start=2, step=3):
+    def compute_coherence_values(self, X, dictionary, corpus, texts, limit, start=3, step=3):
         coherence_values = []
         model_list = []
         for num_topics in range(start, limit, step):
@@ -174,7 +188,7 @@ class BangdanAnalyzer(object):
         return model_list, coherence_values   
     
 
-    def output_model_results(self, X, model, feature_names, n_top_words, texts, max_coherence_value, output_file_name, min_texts_per_topic=5,):
+    def output_model_results(self, X, model, feature_names, n_top_words, texts, max_coherence_value, output_file_name, min_texts_per_topic=10,):
         doc_topic_dist = model.transform(X)
         topic_doc_count = (doc_topic_dist.argmax(axis=1)[:, None] == range(model.n_components)).sum(axis=0)
         
@@ -210,7 +224,7 @@ class BangdanAnalyzer(object):
         dictionary = gensim.corpora.Dictionary(texts_tokenized)
         corpus = [dictionary.doc2bow(text) for text in texts_tokenized]
 
-        start, limit, step = 2, 20, 1
+        start, limit, step = 5, 20, 1
         model_list, coherence_values = self.compute_coherence_values(X=X, dictionary=dictionary, corpus=corpus, texts=texts_tokenized, start=start, limit=limit, step=step)
 
         best_model_index = coherence_values.index(max(coherence_values))
@@ -227,16 +241,17 @@ class BangdanAnalyzer(object):
             text_list = self.get_bangdan_text_from_file_list(file_list)
             self.lda_analysis(text_list, f"logs/{self.year}.out")
         else:
-            for month in range(1):#(12):
-                month += 1
+            for month_id in range(12):
+                month = month_id + 1
                 file_list = self.get_file_list(month=month)
                 text_list = self.get_bangdan_text_from_file_list(file_list)
                 self.lda_analysis(text_list, f"logs/{self.year}-{str(month).zfill(2)}.out")
+                print(f"finished month {month}")
 
 
 if __name__ == "__main__":
-    for year in [2020]:
-        for by_month in [True, False]:
+    for year in ANALYSIS_YEARS:
+        for by_month in [True]: #, False]:
             analyzer = BangdanAnalyzer(
                 year=year,
                 by_month=by_month,
