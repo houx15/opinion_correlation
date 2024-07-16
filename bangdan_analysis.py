@@ -93,7 +93,7 @@ def unzip_all_bangdan_files():
     """
     将原始微博数据解压缩到当前目录的bangdan_data文件夹
     """
-    for year in ANALYSIS_YEARS:
+    for year in [2023]: #ANALYSIS_YEARS:
         bangdan_files_dir = get_bangdan_files_dir(year)
         unzipped_dir = get_bangdan_unzipped_files_dir(year)
         extract_7z_files(source_folder=bangdan_files_dir, target_folder=unzipped_dir)
@@ -111,7 +111,7 @@ class BangdanAnalyzer(object):
         
     ):
         if bangdan_type is None:
-            bangdan_type = ["2"]
+            bangdan_type = ["1", "2"]
         self.year = year
         self.data_dir = get_bangdan_unzipped_files_dir(year)
         self.by_month = by_month
@@ -165,12 +165,16 @@ class BangdanAnalyzer(object):
             model = LatentDirichletAllocation(n_components=num_topics, random_state=42)
             model.fit(X)
             model_list.append(model)
-            coherencemodel = CoherenceModel(model=model, texts=texts, dictionary=dictionary, coherence='c_v')
+
+            topics = []
+            for topic_idx, topic in enumerate(model.components_):
+                topics.append([dictionary[i] for i in topic.argsort()[:-10 - 1:-1]])
+            coherencemodel = CoherenceModel(topics=topics, texts=texts, dictionary=dictionary, coherence='c_v')
             coherence_values.append(coherencemodel.get_coherence())
         return model_list, coherence_values   
     
 
-    def output_model_results(self, X, model, feature_names, n_top_words, texts, output_file_name, min_texts_per_topic=5,):
+    def output_model_results(self, X, model, feature_names, n_top_words, texts, max_coherence_value, output_file_name, min_texts_per_topic=5,):
         doc_topic_dist = model.transform(X)
         topic_doc_count = (doc_topic_dist.argmax(axis=1)[:, None] == range(model.n_components)).sum(axis=0)
         
@@ -182,6 +186,11 @@ class BangdanAnalyzer(object):
             output_text += f"Topic #{topic_idx} ({topic_doc_count[topic_idx]} texts):\n"
             output_text += " ".join([feature_names[i] for i in topic.argsort()[:-n_top_words - 1:-1]])
             output_text += "\n\n"
+        
+        output_text += f"Perplexity: {model.perplexity(X)}\n"
+        output_text += f"Log Likelihood: {model.score(X)}\n"
+        output_text += f"Coherence Values: {max_coherence_value}"
+
         output_text += "\n\n\n\n"
         
         with open(output_file_name, "a", encoding="utf8") as wfile:
@@ -208,7 +217,9 @@ class BangdanAnalyzer(object):
         best_model = model_list[best_model_index]
         tf_feature_names = vectorizer.get_feature_names_out()
 
-        self.output_model_results(X, best_model, tf_feature_names, n_top_words, text_list, min_texts_per_topic=10)
+        max_coherence_value = max(coherence_values)
+
+        self.output_model_results(X, best_model, tf_feature_names, n_top_words, text_list, max_coherence_value, output_file_name=output_file_name, min_texts_per_topic=10)
 
     def analyze(self):
         if self.by_month is False:
@@ -224,9 +235,10 @@ class BangdanAnalyzer(object):
 
 
 if __name__ == "__main__":
-    for year in [20]:
+    for year in [2020]:
         for by_month in [True, False]:
             analyzer = BangdanAnalyzer(
                 year=year,
                 by_month=by_month,
             )
+            analyzer.analyze()
