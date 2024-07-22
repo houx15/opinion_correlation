@@ -65,6 +65,7 @@ cards 仅考虑card_type == 11的内容，是实际展示的榜单
 import os
 import glob
 import json
+import random
 from datetime import datetime
 
 from configs import *
@@ -136,12 +137,12 @@ class BangdanAnalyzer(object):
         # bangdan_text_list = []
         bangdan_text_set = set()
         for file_name in file_list:
-            print(file_name)
-            with open(file_name, "r") as rfile:
+            with open(file_name, "r", errors="replace") as rfile:
                 for line in rfile.readlines():
                     line = line.strip()
                     line_data = line.split("\t")
                     if len(line_data) < 2:
+                        print("line data cannot be splitted")
                         continue
                     try:
                         data = json.loads(line_data[1])
@@ -153,9 +154,17 @@ class BangdanAnalyzer(object):
                         print(f"Error at character {e.pos}, {line_data[1][int(e.pos)-20: int(e.pos)+20]}")
                         continue
                     if data["type"] not in self.bangdan_type:
+                        # print(f"wrong data type: {data['type']}")
                         # 排除不允许的榜单类型
                         continue
                     data = json.loads(data["bangdan"])
+                    if type(data) is not dict:
+                        print(f"bad data type")
+                        print(data)
+                        continue
+                    if "cards" not in data.keys() or data["cards"] is None:
+                        print(f"bad data type in file {file_name}")
+                        continue
                     for card in data["cards"]:
                         if str(card["card_type"]) != "11":
                             continue
@@ -163,12 +172,14 @@ class BangdanAnalyzer(object):
                         if self.top10:
                             card_group = card_group[0:20]
                         for s_card in card_group:
+                            if str(s_card["card_type"]) != "4":
+                                continue
                             if "desc" in s_card.keys():
                                 bangdan_text_set.add(s_card["desc"])
-                            elif "title" in s_card.keys():
-                                bangdan_text_set.add(s_card["title"])
+                            # elif "title" in s_card.keys():
+                            #     bangdan_text_set.add(s_card["title"])
                             else:
-                                print(f"desc not in keys! file_name {file_name}, data: {s_card.keys()}")
+                                print(f"desc not in keys! file_name {file_name}, data: {s_card}")
         return list(bangdan_text_set)
     
 
@@ -199,7 +210,17 @@ class BangdanAnalyzer(object):
                 continue
             output_text += f"Topic #{topic_idx} ({topic_doc_count[topic_idx]} texts):\n"
             output_text += " ".join([feature_names[i] for i in topic.argsort()[:-n_top_words - 1:-1]])
-            output_text += "\n\n"
+            output_text += "\n"
+            
+            # 获取属于当前主题的文本索引
+            topic_text_indices = [i for i, topic_dist in enumerate(doc_topic_dist) if topic_dist.argmax() == topic_idx]
+            # 随机抽取20条文本（如果不足20条则全部输出）
+            sampled_text_indices = random.sample(topic_text_indices, min(20, len(topic_text_indices)))
+            sampled_texts = [texts[i] for i in sampled_text_indices]
+            
+            output_text += "Sampled texts:\n"
+            for text in sampled_texts:
+                output_text += text + "\n\n"
         
         output_text += f"Perplexity: {model.perplexity(X)}\n"
         output_text += f"Log Likelihood: {model.score(X)}\n"
@@ -224,7 +245,7 @@ class BangdanAnalyzer(object):
         dictionary = gensim.corpora.Dictionary(texts_tokenized)
         corpus = [dictionary.doc2bow(text) for text in texts_tokenized]
 
-        start, limit, step = 5, 20, 1
+        start, limit, step = 5, 15, 1
         model_list, coherence_values = self.compute_coherence_values(X=X, dictionary=dictionary, corpus=corpus, texts=texts_tokenized, start=start, limit=limit, step=step)
 
         best_model_index = coherence_values.index(max(coherence_values))
@@ -243,14 +264,23 @@ class BangdanAnalyzer(object):
         else:
             for month_id in range(12):
                 month = month_id + 1
+                # if self.year == 2022 and month < 12:
+                #     continue
                 file_list = self.get_file_list(month=month)
+                if len(file_list) == 0:
+                    print(f"No file list: Year-{self.year}, Month-{month}")
+                    continue
                 text_list = self.get_bangdan_text_from_file_list(file_list)
                 self.lda_analysis(text_list, f"logs/{self.year}-{str(month).zfill(2)}.out")
-                print(f"finished month {month}")
+                print(f"finished month {month}\n")
 
 
 if __name__ == "__main__":
+    # unzip_all_bangdan_files()
     for year in ANALYSIS_YEARS:
+        # if year in [2020, 2021]:
+        #     continue
+        print(f"\n\nprocessing year-{year}")
         for by_month in [True]: #, False]:
             analyzer = BangdanAnalyzer(
                 year=year,
