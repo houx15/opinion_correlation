@@ -220,7 +220,8 @@ class BangdanAnalyzer(object):
             
             output_text += "Sampled texts:\n"
             for text in sampled_texts:
-                output_text += text + "\n\n"
+                output_text += text + "\n"
+            output_text += "\n\n\n"
         
         output_text += f"Perplexity: {model.perplexity(X)}\n"
         output_text += f"Log Likelihood: {model.score(X)}\n"
