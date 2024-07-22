@@ -66,6 +66,7 @@ import os
 import glob
 import json
 import random
+import numpy as np
 from datetime import datetime
 
 from configs import *
@@ -75,8 +76,14 @@ from typing import Dict, List, Optional, Tuple
 
 import jieba
 
+import torch
+
+from transformers import BertTokenizer, BertModel
+
 from sklearn.feature_extraction.text import CountVectorizer
 from sklearn.decomposition import LatentDirichletAllocation
+from sklearn.cluster import KMeans
+from scipy.spatial.distance import cdist
 
 import gensim
 from gensim.models.coherencemodel import CoherenceModel
@@ -257,7 +264,52 @@ class BangdanAnalyzer(object):
 
         self.output_model_results(X, best_model, tf_feature_names, n_top_words, text_list, max_coherence_value, output_file_name=output_file_name, min_texts_per_topic=10)
 
-    def analyze(self):
+
+    def load_pretrained_model(self):
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        
+        self.tokenizer = BertTokenizer.from_pretrained("bert-base-chinese")
+        self.model = BertModel.from_pretrained("bert-base-chinese")
+        self.model.eval()
+        self.model.to(self.device)
+    
+    def get_bert_embedding(self, text: str):
+        inputs = self.tokenizer(text, return_tensors="pt", padding=True, truncation=True, max_length=128)
+        inputs = {key: value.to(self.device) for key, value in inputs.items()}
+        with torch.no_grad():
+            outputs = self.model(**inputs)
+            return outputs.last_hidden_state[:, 0, :].squeeze().cpu().numpy()
+    
+    def cluster(self, text_list, output_file_name: str, num_clusters: int = 10):
+        text_embeddings = np.array([
+            self.get_bert_embedding(text) for text in text_list
+        ])
+        kmeans = KMeans(n_clusters=num_clusters, random_state=42)
+        labels = kmeans.fit_predict(text_embeddings)
+
+        distances = cdist(text_embeddings, kmeans.cluster_centers_, 'euclidean')
+
+        with open(output_file_name, "a", encoding="utf8") as wfile:
+            for label in range(num_clusters):
+                wfile.write(f"Label #{label}: \n")
+                label_indices = [i for i in range(len(text_list)) if labels[i] == label]
+                label_texts = [text_list[i] for i in label_indices]
+                label_distances = [distances[i, label] for i in label_indices]
+                # 根据距离进行排序
+                sorted_indices = np.argsort(label_distances)
+                sorted_texts = [label_texts[i] for i in sorted_indices]
+                sorted_distances = [label_distances[i] for i in sorted_indices]
+                # 输出前20个样本
+                wfile.write(f'{len(sorted_texts)} samples of the texts belonged to this label\n')
+                for text, distance in zip(sorted_texts[:20], sorted_distances[:20]):
+                    wfile.write(f'{text} (distance: {distance:.4f})\n')
+                wfile.write('\n\n')
+
+        print(f'Cluster results saved to {output_file_name}')
+
+
+    def analyze(self, analysis_mode: str = "kmeans"):
+        # kmeans or lda
         if self.by_month is False:
             file_list = self.get_file_list()
             text_list = self.get_bangdan_text_from_file_list(file_list)
@@ -272,7 +324,10 @@ class BangdanAnalyzer(object):
                     print(f"No file list: Year-{self.year}, Month-{month}")
                     continue
                 text_list = self.get_bangdan_text_from_file_list(file_list)
-                self.lda_analysis(text_list, f"logs/{self.year}-{str(month).zfill(2)}.out")
+                if analysis_mode == "lda":
+                    self.lda_analysis(text_list, f"logs/{self.year}-{str(month).zfill(2)}.out")
+                else:
+                    self.cluster(text_list, f"logs/kmeans-{self.year}-{str(month).zfill(2)}.out")
                 print(f"finished month {month}\n")
 
 
